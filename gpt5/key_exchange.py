@@ -279,44 +279,93 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
     # Share indices used (not bit values) with peer to find intersection.
     # For lab simplicity we send our indices as a JSON-encoded short string via beacons using tag LIST:...
     # Break into small chunks of up to ~60 chars to fit SSID
+    # my_indices = sorted(bits.keys())
+    # chunk = ",".join(map(str,my_indices))
+    # # send 3 times
+    # for _ in range(3):
+    #     send_beacon(iface, f"KEYX_INDICES:{myid}:{chunk[:60]}")
+    #     time.sleep(0.05)
+    # time.sleep(0.5)
+
+    # # # Signal the responder we are done
+    # # send_end(iface, myid)
+    # # time.sleep(0.2)
+    # # send_end(iface, myid)
+
+    # # Now collect peer indices (we previously captured rx_data raw). Search rx_data['raw'] for KEYX_INDICES
+    # peer_indices = set()
+    # with rx_lock:
+    #     raw = rx_data.get("raw", [])
+    # for (_, ssid, _) in raw:
+    #     if ssid.startswith("KEYX_INDICES:"):
+    #         parts = ssid.split(":",2)
+    #         if len(parts) >= 3:
+    #             other_chunk = parts[2]
+    #             for s in other_chunk.split(","):
+    #                 if s.strip().isdigit():
+    #                     peer_indices.add(int(s.strip()))
+    # common = set(my_indices).intersection(peer_indices)
+    # if not common:
+    #     print("[!] No common indices identified. Trying fallback: intersection of observed indices in idxmap")
+    #     # fallback: if peer didn't send indices, try intersection of indices seen locally and those we heard labeled from peer
+    #     common = set(idxmap.keys()).intersection(set(idxmap.keys()))
+    # common = sorted(common)
+    # print(f"[*] Common indices count: {len(common)}")
+
+    # # Build final key bits
+    # key_bits = []
+    # for idx in common:
+    #     if idx in bits:
+    #         key_bits.append(str(bits[idx]))
+    # key_str = "".join(key_bits)
+    # print(f"[*] Key bits (len {len(key_str)}): {key_str}")
+
+    # --- After deriving bits ---
     my_indices = sorted(bits.keys())
-    chunk = ",".join(map(str,my_indices))
-    # send 3 times
-    for _ in range(3):
-        send_beacon(iface, f"KEYX_INDICES:{myid}:{chunk[:60]}")
-        time.sleep(0.05)
-    time.sleep(0.5)
+    if not my_indices:
+        print("[!] No bits derived; aborting.")
+        return
 
-    # # Signal the responder we are done
-    # send_end(iface, myid)
-    # time.sleep(0.2)
-    # send_end(iface, myid)
+    # 1. Send my indices reliably in small chunks
+    chunk_size = 50  # keep SSID safe
+    indices_str = ",".join(map(str, my_indices))
+    for start in range(0, len(indices_str), chunk_size):
+        chunk = indices_str[start:start+chunk_size]
+        for _ in range(3):  # repeat for reliability
+            send_beacon(iface, f"KEYX_INDICES:{myid}:{chunk}")
+            time.sleep(0.05)
 
-    # Now collect peer indices (we previously captured rx_data raw). Search rx_data['raw'] for KEYX_INDICES
+    # 2. Wait to collect peer indices
     peer_indices = set()
-    with rx_lock:
-        raw = rx_data.get("raw", [])
-    for (_, ssid, _) in raw:
-        if ssid.startswith("KEYX_INDICES:"):
-            parts = ssid.split(":",2)
-            if len(parts) >= 3:
-                other_chunk = parts[2]
-                for s in other_chunk.split(","):
-                    if s.strip().isdigit():
-                        peer_indices.add(int(s.strip()))
-    common = set(my_indices).intersection(peer_indices)
+    timeout = 3.0
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        with rx_lock:
+            raw = rx_data.get("raw", [])
+        for (_, ssid, _) in raw:
+            if ssid.startswith("KEYX_INDICES:"):
+                parts = ssid.split(":", 2)
+                if len(parts) >= 3:
+                    for s in parts[2].split(","):
+                        if s.strip().isdigit():
+                            peer_indices.add(int(s.strip()))
+        if peer_indices:
+            break
+        time.sleep(0.05)
+
+    if not peer_indices:
+        print("[!] Did not receive peer indices; aborting.")
+        return
+
+    # 3. Compute common indices
+    common = sorted(set(my_indices).intersection(peer_indices))
     if not common:
-        print("[!] No common indices identified. Trying fallback: intersection of observed indices in idxmap")
-        # fallback: if peer didn't send indices, try intersection of indices seen locally and those we heard labeled from peer
-        common = set(idxmap.keys()).intersection(set(idxmap.keys()))
-    common = sorted(common)
+        print("[!] No common indices after exchange; aborting.")
+        return
     print(f"[*] Common indices count: {len(common)}")
 
-    # Build final key bits
-    key_bits = []
-    for idx in common:
-        if idx in bits:
-            key_bits.append(str(bits[idx]))
+    # 4. Build key from common indices
+    key_bits = [str(bits[i]) for i in common]
     key_str = "".join(key_bits)
     print(f"[*] Key bits (len {len(key_str)}): {key_str}")
 
