@@ -92,8 +92,18 @@ def send_end(iface, myid):
         time.sleep(0.05)
     print("sent end beacon")
 
+def send_digest(iface, myid, digest):
+    """Send SHA256 digest in small chunks repeatedly."""
+    chunk_size = 16
+    for start in range(0, len(digest), chunk_size):
+        chunk = digest[start:start+chunk_size]
+        # Repeat each chunk several times for reliability
+        for _ in range(5):
+            send_beacon(iface, f"KEYX_DIGEST:{myid}:{chunk}")
+            time.sleep(0.05)
+
 # Higher-level role negotiation & exchange
-def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script="./set_monitor_mode.sh"):
+def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script="./set_monitor_mode.sh"):
     src_mac = get_if_hwaddr(iface)
     set_monitor(iface, channel, monitor_script)
     print("[*] Detecting whether peer is present...")
@@ -132,8 +142,15 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
                 rx_data.setdefault("idx", {}).setdefault(idx, {})[fromid] = (ts, rssi)
             return
         
+        if ssid.startswith("KEYX_DIGEST:"):
+            parts = ssid.split(":", 2)
+            if len(parts) >= 3:
+                peerid = parts[1]
+                chunk = parts[2]
+                with rx_lock:
+                    rx_data.setdefault("digests", {}).setdefault(peerid, []).append(chunk)
         # END signal
-        if "END:" in ssid:
+        if ssid.startsWith("KEYX_END:"):
             end_from = ssid.split(":",1)[1]
             print(f"[*] END signal received from {end_from}")
             stop_event.set()   # this will stop the responder loop
@@ -260,10 +277,10 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
         time.sleep(0.05)
     time.sleep(0.5)
 
-    # Signal the responder we are done
-    send_end(iface, myid)
-    time.sleep(0.2)
-    send_end(iface, myid)
+    # # Signal the responder we are done
+    # send_end(iface, myid)
+    # time.sleep(0.2)
+    # send_end(iface, myid)
 
     # Now collect peer indices (we previously captured rx_data raw). Search rx_data['raw'] for KEYX_INDICES
     peer_indices = set()
@@ -297,22 +314,42 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
     key_digest = hashlib.sha256(key_str.encode()).hexdigest()
     print(f"[*] Key digest (sha256): {key_digest[:12]}...")
 
+    # 1. Send digest reliably
+    send_digest(iface, myid, key_digest)
+
+    # 2. Wait for peer digest with timeout
+    timeout = 3.0
+    start = time.time()
+    peer_digest = None
+    while time.time() - start < timeout:
+        with rx_lock:
+            for peerid, chunks in rx_data.get("digests", {}).items():
+                # assemble full digest
+                if chunks:
+                    peer_digest = "".join(chunks)
+                    break
+        if peer_digest:
+            break
+        time.sleep(0.05)
+
+    # 3. Send END signal only after digest has been sent
+    send_end(iface, myid)
     # Send key digest (commit)
     # Send short digest in multiple beacons
-    for _ in range(3):
-        send_beacon(iface, f"KEYX_DIGEST:{myid}:{key_digest[:16]}")
-        time.sleep(0.05)
-    # Wait to collect peer digest
-    time.sleep(1.0)
-    peer_digest = None
-    with rx_lock:
-        raw = rx_data.get("raw", [])
-    for (_, ssid, _) in raw:
-        if ssid.startswith("KEYX_DIGEST:"):
-            parts = ssid.split(":",2)
-            if len(parts) >= 3:
-                peer_digest = parts[2]
-                break
+    # for _ in range(3):
+    #     send_beacon(iface, f"KEYX_DIGEST:{myid}:{key_digest[:16]}")
+    #     time.sleep(0.05)
+    # # Wait to collect peer digest
+    # time.sleep(1.0)
+    # peer_digest = None
+    # with rx_lock:
+    #     raw = rx_data.get("raw", [])
+    # for (_, ssid, _) in raw:
+    #     if ssid.startswith("KEYX_DIGEST:"):
+    #         parts = ssid.split(":",2)
+    #         if len(parts) >= 3:
+    #             peer_digest = parts[2]
+    #             break
     print(f"[*] Peer digest observed: {peer_digest}")
     if peer_digest and peer_digest.startswith(key_digest[:len(peer_digest)]):
         print("[+] Key confirmed: digests match (likely both have same key)")
@@ -333,7 +370,7 @@ if __name__ == "__main__":
     parser.add_argument("--channel", required=True, type=int)
     parser.add_argument("--id", required=True)
     parser.add_argument("--n", default=300, type=int, help="number of frames to try exchange")
-    parser.add_argument("--z", default=0.8, type=float, help="z threshold in stddevs")
+    parser.add_argument("--z", default=0.6, type=float, help="z threshold in stddevs")
     parser.add_argument("--monitor-script", default="./set_monitor_mode.sh")
     args = parser.parse_args()
     run_key_exchange(args.iface, args.id, n_frames=args.n, z=args.z, channel=args.channel, monitor_script=args.monitor_script)
