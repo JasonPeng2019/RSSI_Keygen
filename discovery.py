@@ -57,10 +57,15 @@ class RoleManager:
         )
         
         # Use different payloads to distinguish frame types
+        # Add LLC header manually to avoid corruption
         if frame_type == FRAME_TYPE_READY_BEGIN:
-            payload = Raw(load=PAYLOAD_READY_BEGIN)
+            # Add LLC header + our payload
+            llc_payload = b'\xaa\xaa\x03\x00\x00\x00' + PAYLOAD_READY_BEGIN
+            payload = Raw(load=llc_payload)
         else:  # RESPONDER_ACK
-            payload = Raw(load=PAYLOAD_RESPONDER_ACK)
+            # Add LLC header + our payload
+            llc_payload = b'\xaa\xaa\x03\x00\x00\x00' + PAYLOAD_RESPONDER_ACK
+            payload = Raw(load=llc_payload)
         
         frame = RadioTap() / dot11 / payload
         return frame
