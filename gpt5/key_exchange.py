@@ -12,6 +12,61 @@ import json
 import hashlib
 from collections import defaultdict
 from scapy.all import RadioTap, Dot11, Dot11Beacon, Dot11Elt, LLC, SNAP, Raw, sendp, get_if_hwaddr
+from scapy.all import sniff, sendp, RadioTap, Dot11, Dot11Beacon, Dot11Elt, get_if_hwaddr
+
+import subprocess
+from scapy.all import get_if_hwaddr, Scapy_Exception
+
+
+def safe_get_hwaddr(iface):
+    """
+    Try to get the hardware MAC address.
+    If interface is in monitor mode (unsupported by Scapy), temporarily
+    switch to managed mode, fetch the MAC, and restore monitor mode.
+    """
+    global mac_1
+    if mac_1 is not None:
+        return mac_1
+    try:
+        mac_x = get_if_hwaddr(iface)
+        if mac_x:
+            mac_1 = mac_x
+            return mac_x
+
+    except Scapy_Exception as e:
+        # Check for the "Unsupported address family (803)" case
+        if "Unsupported address family" in str(e):
+            print(f"[!] {iface} appears to be in monitor mode — temporarily switching to managed mode...")
+
+            try:
+                # Bring interface down
+                subprocess.run(["ip", "link", "set", iface, "down"], check=True)
+
+                # Switch to managed mode
+                subprocess.run(["iwconfig", iface, "mode", "managed"], check=True)
+
+                # Bring it up and retry
+                subprocess.run(["ip", "link", "set", iface, "up"], check=True)
+                mac_x = safe_get_hwaddr(iface)
+                mac_1 = mac_x
+
+                print(f"[+] Got MAC {mac}, restoring monitor mode...")
+
+                # Restore monitor mode
+                subprocess.run(["ip", "link", "set", iface, "down"], check=True)
+                subprocess.run(["iwconfig", iface, "mode", "monitor"], check=True)
+                subprocess.run(["ip", "link", "set", iface, "up"], check=True)
+
+                print("[+] Interface restored to monitor mode.")
+                return mac_x
+
+            except Exception as e2:
+                print(f"[!] Failed to temporarily switch mode: {e2}")
+                return "00:00:00:00:00:00"
+
+        # If it’s some other Scapy exception, just print and continue safely
+        print(f"[!] Could not get MAC address: {e}")
+        return "00:00:00:00:00:00"
 
 # Global storage
 rx_lock = threading.Lock()
@@ -32,7 +87,8 @@ def make_beacon(ssid_str, src_mac):
             LLC() / SNAP() / Raw(load=""))
 
 def send_beacon(iface, ssid):
-    pkt = make_beacon(ssid, get_if_hwaddr(iface))
+    sr_mac = safe_get_hwaddr(iface)
+    pkt = make_beacon(ssid, sr_mac)
     sendp(pkt, iface=iface, verbose=False)
 
 def parse_ssid(pkt):
@@ -88,6 +144,8 @@ def detect_peer_ready(iface, listen_seconds=1.0):
 
 # Higher-level role negotiation & exchange
 def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script="./set_monitor_mode.sh"):
+    src_mac = safe_get_hwaddr(iface)
+
     set_monitor(iface, channel, monitor_script)
     print("[*] Detecting whether peer is present...")
     peer = detect_peer_ready(iface, listen_seconds=1.0)
@@ -98,7 +156,6 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
         print("[+] No READY heard; I will be initiator")
         role = "initiator"
 
-    src_mac = get_if_hwaddr(iface)
 
     # For receiver, we will run a sniff thread to capture `IDX` frames and record rssi
     stop_event = threading.Event()
@@ -271,7 +328,8 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
     # Build final key bits
     key_bits = []
     for idx in common:
-        key_bits.append(str(bits[idx]))
+        if idx in bits:
+            key_bits.append(str(bits[idx]))
     key_str = "".join(key_bits)
     print(f"[*] Key bits (len {len(key_str)}): {key_str}")
 
@@ -310,6 +368,8 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
     print(f"sha256_prefix: {key_digest[:16]}")
 
 if __name__ == "__main__":
+    global mac_1 
+    mac_1 = None
     parser = argparse.ArgumentParser()
     parser.add_argument("--iface", required=True)
     parser.add_argument("--channel", required=True, type=int)
