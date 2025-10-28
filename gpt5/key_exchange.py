@@ -160,7 +160,9 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
                 nums = [int(s) for s in parts[2].split(",") if s.isdigit()]
             with rx_lock:
                 d = rx_data.setdefault("peer_indices", {})
+                before = len(d.get(peerid, set()))
                 d.setdefault(peerid, set()).update(nums)
+                after = len(d[peerid])
             return
         # END signal
         if ssid.startswith("KEYX_END:"):
@@ -347,7 +349,7 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
 
     # 2. Wait to collect peer indices
     peer_indices = set()
-    timeout = 5.0
+    timeout = 30.0
     start_time = time.time()
     while time.time() - start_time < timeout:
         with rx_lock:
