@@ -11,7 +11,7 @@ import re
 import json
 import hashlib
 from collections import defaultdict
-from scapy.all import RadioTap, Dot11, Dot11Beacon, Dot11Elt, LLC, SNAP, Raw, sendp, get_if_hwaddr
+from scapy.all import RadioTap, Dot11, Dot11Beacon, Dot11Elt, LLC, SNAP, Raw, sendp, get_if_hwaddr, sniff
 
 # Global storage
 rx_lock = threading.Lock()
@@ -86,8 +86,14 @@ def detect_peer_ready(iface, listen_seconds=1.0):
             return ssid.split(":",1)[1]  # sender id
     return None
 
+def send_end(iface, myid):
+    for _ in range(3):
+        send_beacon(iface, f"KEYX_END:{myid}")
+        time.sleep(0.05)
+
 # Higher-level role negotiation & exchange
 def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script="./set_monitor_mode.sh"):
+    src_mac = get_if_hwaddr(iface)
     set_monitor(iface, channel, monitor_script)
     print("[*] Detecting whether peer is present...")
     peer = detect_peer_ready(iface, listen_seconds=1.0)
@@ -97,8 +103,6 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
     else:
         print("[+] No READY heard; I will be initiator")
         role = "initiator"
-
-    src_mac = get_if_hwaddr(iface)
 
     # For receiver, we will run a sniff thread to capture `IDX` frames and record rssi
     stop_event = threading.Event()
@@ -125,6 +129,13 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
             fromid = m.group(2)
             with rx_lock:
                 rx_data.setdefault("idx", {}).setdefault(idx, {})[fromid] = (ts, rssi)
+            return
+        
+        # END signal
+        if ssid.startswith("KEYX_END:"):
+            end_from = ssid.split(":",1)[1]
+            print(f"[*] END signal received from {end_from}")
+            stop_event.set()   # this will stop the responder loop
             return
     t_sniff = threading.Thread(target=lambda: sniff(iface=iface, prn=recv_handler, store=False, stop_filter=lambda p: stop_event.is_set()), daemon=True)
     t_sniff.start()
@@ -248,6 +259,9 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
         time.sleep(0.05)
     time.sleep(0.5)
 
+    # Signal the responder we are done
+    send_end(iface, myid)
+
     # Now collect peer indices (we previously captured rx_data raw). Search rx_data['raw'] for KEYX_INDICES
     peer_indices = set()
     with rx_lock:
@@ -271,7 +285,8 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
     # Build final key bits
     key_bits = []
     for idx in common:
-        key_bits.append(str(bits[idx]))
+        if idx in bits:
+            key_bits.append(str(bits[idx]))
     key_str = "".join(key_bits)
     print(f"[*] Key bits (len {len(key_str)}): {key_str}")
 
