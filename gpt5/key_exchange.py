@@ -93,13 +93,13 @@ def send_end(iface, myid):
     print("sent end beacon")
 
 def send_digest(iface, myid, digest):
-    """Send SHA256 digest in small chunks repeatedly."""
+    """Send SHA256 digest in small chunks repeatedly with index for ordering."""
     chunk_size = 16
-    for start in range(0, len(digest), chunk_size):
-        chunk = digest[start:start+chunk_size]
-        # Repeat each chunk several times for reliability
-        for _ in range(5):
-            send_beacon(iface, f"KEYX_DIGEST:{myid}:{chunk}")
+    total_chunks = (len(digest) + chunk_size - 1) // chunk_size
+    for idx in range(total_chunks):
+        chunk = digest[idx*chunk_size : (idx+1)*chunk_size]
+        for _ in range(5):  # repeat for reliability
+            send_beacon(iface, f"KEYX_DIGEST:{myid}:{idx}:{chunk}")
             time.sleep(0.05)
 
 # Higher-level role negotiation & exchange
@@ -143,14 +143,15 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
             return
         
         if ssid.startswith("KEYX_DIGEST:"):
-            parts = ssid.split(":", 2)
-            if len(parts) >= 3:
+            parts = ssid.split(":", 3)
+            if len(parts) >= 4:
                 peerid = parts[1]
-                chunk = parts[2]
+                chunk_idx = int(parts[2])
+                chunk_data = parts[3]
                 with rx_lock:
-                    rx_data.setdefault("digests", {}).setdefault(peerid, []).append(chunk)
+                    rx_data.setdefault("digests", {}).setdefault(peerid, {})[chunk_idx] = chunk_data
         # END signal
-        if ssid.startsWith("KEYX_END:"):
+        if ssid.startswith("KEYX_END:"):
             end_from = ssid.split(":",1)[1]
             print(f"[*] END signal received from {end_from}")
             stop_event.set()   # this will stop the responder loop
@@ -323,10 +324,11 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
     peer_digest = None
     while time.time() - start < timeout:
         with rx_lock:
-            for peerid, chunks in rx_data.get("digests", {}).items():
-                # assemble full digest
-                if chunks:
-                    peer_digest = "".join(chunks)
+            for peerid, chunks_dict in rx_data.get("digests", {}).items():
+                if chunks_dict:
+                    # sort by index and concatenate
+                    ordered_chunks = [chunks_dict[i] for i in sorted(chunks_dict.keys())]
+                    peer_digest = "".join(ordered_chunks)
                     break
         if peer_digest:
             break
@@ -351,7 +353,7 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
     #             peer_digest = parts[2]
     #             break
     print(f"[*] Peer digest observed: {peer_digest}")
-    if peer_digest and peer_digest.startswith(key_digest[:len(peer_digest)]):
+    if peer_digest == key_digest:
         print("[+] Key confirmed: digests match (likely both have same key)")
     else:
         print("[!] Key digests do not match or no digest observed. Keys likely differ.")
