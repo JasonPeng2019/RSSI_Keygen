@@ -80,15 +80,25 @@ class RoleManager:
             
             print(f"[Debug] Checking payload from {src_mac}: {payload[:30]}...")
             
-            # Check for our specific payloads (handle both with and without LLC layer)
-            if payload == PAYLOAD_READY_BEGIN or PAYLOAD_READY_BEGIN in payload:
-                print(f"[Debug] Found READY_BEGIN from {src_mac}")
-                return True, ("READY_BEGIN", src_mac)
-            elif payload == PAYLOAD_RESPONDER_ACK or PAYLOAD_RESPONDER_ACK in payload:
-                print(f"[Debug] Found RESPONDER_ACK from {src_mac}")
-                return True, ("RESPONDER_ACK", src_mac)
+            # Check for our specific payloads (handle LLC corruption that eats first few bytes)
+            payload_str = payload.decode('latin1', errors='ignore')
+            
+            if b'I_KEY_GEN_2025|READY_BEGIN' in payload or 'I_KEY_GEN_2025|READY_BEGIN' in payload_str:
+                if src_mac != self.mac_addr:
+                    print(f"[PARTNER FOUND] READY_BEGIN from {src_mac}")
+                    return True, ("READY_BEGIN", src_mac)
+                else:
+                    print(f"[Debug] Ignoring own READY_BEGIN")
+            elif b'I_KEY_GEN_2025|RESPONDER_ACK' in payload or 'I_KEY_GEN_2025|RESPONDER_ACK' in payload_str:
+                if src_mac != self.mac_addr:
+                    print(f"[PARTNER FOUND] RESPONDER_ACK from {src_mac}")
+                    return True, ("RESPONDER_ACK", src_mac)
+                else:
+                    print(f"[Debug] Ignoring own RESPONDER_ACK")
+            elif src_mac == self.mac_addr:
+                print(f"[Debug] Our own frame - ignoring")
             else:
-                print(f"[Debug] Payload doesn't match our protocol")
+                print(f"[Debug] Payload from {src_mac} doesn't match our protocol")
         
         return False, None
     
