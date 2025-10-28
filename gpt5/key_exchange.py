@@ -25,11 +25,10 @@ def set_monitor(iface, channel, script="./set_monitor_mode.sh"):
 
 def make_beacon(ssid_str, src_mac):
     return (RadioTap() /
-            Dot11(type=0, subtype=8, addr1="ff:ff:ff:ff:ff:ff",
-                  addr2=src_mac, addr3=src_mac) /
-            Dot11Beacon() /
-            Dot11Elt(ID="SSID", info=ssid_str.encode()) /
-            LLC() / SNAP() / Raw(load=""))
+        Dot11(type=0, subtype=8, addr1="ff:ff:ff:ff:ff:ff",
+        addr2=src_mac, addr3=src_mac) /
+        Dot11Beacon() /
+        Dot11Elt(ID="SSID", info=ssid_str.encode()))
 
 def send_beacon(iface, ssid):
     pkt = make_beacon(ssid, get_if_hwaddr(iface))
