@@ -27,4 +27,3 @@ iwconfig $INTERFACE
 echo ""
 echo "========================================"
 echo "Verify that Mode is 'Monitor' and the channel is $CHANNEL"
-```

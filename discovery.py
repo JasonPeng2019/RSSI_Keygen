@@ -21,18 +21,20 @@ import sys
 import json
 
 # Configuration
-INTERFACE = "wlan0mon"  # monitor mode interface
+INTERFACE = "wlan0"  # monitor mode interface - change this to match your interface
 CHANNEL = 6  # WiFi channel to use
 LISTEN_TIMEOUT = 5  # Initial listen period in seconds
 TRANSMIT_TIMEOUT = 30  # timeout
-TRANSMIT_INTERVAL = 0.25  # Time between transmissions in seconds
+TRANSMIT_INTERVAL = 0.1  # Time between transmissions in seconds (faster)
 
-# Custom frame types (using subtype field)
-FRAME_TYPE_READY_BEGIN = 0xAA
-FRAME_TYPE_RESPONDER_ACK = 0xBB
+# Custom frame types (using subtype field) - Use valid data frame subtypes
+FRAME_TYPE_READY_BEGIN = 0x0  # Standard data frame
+FRAME_TYPE_RESPONDER_ACK = 0x4  # Null data frame
 
-# Magic number to identify  protocol
+# Magic number to identify protocol
 MAGIC_BYTES = b"RSSI_KEY_GEN_2025"
+PAYLOAD_READY_BEGIN = MAGIC_BYTES + b"|READY_BEGIN"
+PAYLOAD_RESPONDER_ACK = MAGIC_BYTES + b"|RESPONDER_ACK"
 
 class RoleManager:
     def __init__(self, interface, mac_addr):
@@ -54,7 +56,11 @@ class RoleManager:
             addr3=self.mac_addr   # BSSID
         )
         
-        payload = Raw(load=MAGIC_BYTES)
+        # Use different payloads to distinguish frame types
+        if frame_type == FRAME_TYPE_READY_BEGIN:
+            payload = Raw(load=PAYLOAD_READY_BEGIN)
+        else:  # RESPONDER_ACK
+            payload = Raw(load=PAYLOAD_RESPONDER_ACK)
         
         frame = RadioTap() / dot11 / payload
         return frame
@@ -64,10 +70,16 @@ class RoleManager:
             return False, None
         
         if pkt.haslayer(Raw):
-            if MAGIC_BYTES in bytes(pkt[Raw]):
-                frame_type = pkt[Dot11].subtype
-                src_mac = pkt[Dot11].addr2
-                return True, (frame_type, src_mac)
+            payload = bytes(pkt[Raw])
+            src_mac = pkt[Dot11].addr2
+            
+            # Check for our specific payloads
+            if payload == PAYLOAD_READY_BEGIN:
+                print(f"[Debug] Found READY_BEGIN from {src_mac}")
+                return True, ("READY_BEGIN", src_mac)
+            elif payload == PAYLOAD_RESPONDER_ACK:
+                print(f"[Debug] Found RESPONDER_ACK from {src_mac}")
+                return True, ("RESPONDER_ACK", src_mac)
         
         return False, None
     
@@ -79,21 +91,26 @@ class RoleManager:
             if not self.running:
                 return
             
+            # Only debug 802.11 data frames (our type)
+            if pkt.haslayer(Dot11) and pkt[Dot11].type == 2:
+                print(f"[Debug] Data frame from {pkt[Dot11].addr2}: {pkt.summary()}")
+            
             is_ours, info = self.is_our_frame(pkt)
             if not is_ours:
                 return
             
             frame_type, src_mac = info
+            print("Found frame type:", frame_type, "from", src_mac)
             
             with self.role_lock:
-                if frame_type == FRAME_TYPE_READY_BEGIN and self.role is None:
+                if frame_type == "READY_BEGIN" and self.role is None:
                     # become responder
                     print(f"[Sniffer] Heard READY_BEGIN from {src_mac}")
                     self.role = "RESPONDER"
                     self.peer_mac = src_mac
                     print("[Role] I am the RESPONDER")
                     
-                elif frame_type == FRAME_TYPE_RESPONDER_ACK and self.role == "INITIATOR":
+                elif frame_type == "RESPONDER_ACK" and self.role == "INITIATOR":
                     # Initiator heard responder
                     print(f"[Sniffer] Heard RESPONDER_ACK from {src_mac}")
                     self.peer_mac = src_mac
@@ -118,7 +135,9 @@ class RoleManager:
             if current_role == "INITIATOR":
                 # Send READY_BEGIN frames
                 frame = self.create_custom_frame(FRAME_TYPE_READY_BEGIN)
-                sendp(frame, iface=self.interface, verbose=False)
+                print(f"[Transmitter] Sending READY_BEGIN frame: {frame.summary()}")
+                print(f"[Transmitter] Frame payload: {bytes(frame[Raw]) if frame.haslayer(Raw) else 'No Raw layer'}")
+                sendp(frame, iface=self.interface, verbose=True)  # Enable verbose to see transmission
                 print("[Transmitter] Sent READY_BEGIN")
                 
                 # Check if found a responder
@@ -130,7 +149,9 @@ class RoleManager:
             elif current_role == "RESPONDER":
                 # Send RESPONDER_ACK frames
                 frame = self.create_custom_frame(FRAME_TYPE_RESPONDER_ACK)
-                sendp(frame, iface=self.interface, verbose=False)
+                print(f"[Transmitter] Sending RESPONDER_ACK frame: {frame.summary()}")
+                print(f"[Transmitter] Frame payload: {bytes(frame[Raw]) if frame.haslayer(Raw) else 'No Raw layer'}")
+                sendp(frame, iface=self.interface, verbose=True)  # Enable verbose to see transmission
                 print("[Transmitter] Sent RESPONDER_ACK")
                 
                 if (time.time() - start_time) > 5:  # Send ACKs for 5 seconds
