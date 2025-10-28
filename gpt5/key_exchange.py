@@ -133,7 +133,7 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
             return
         
         # END signal
-        if ssid.contains("END:"):
+        if "END:" in ssid:
             end_from = ssid.split(":",1)[1]
             print(f"[*] END signal received from {end_from}")
             stop_event.set()   # this will stop the responder loop
