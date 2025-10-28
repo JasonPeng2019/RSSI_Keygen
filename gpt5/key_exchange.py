@@ -140,7 +140,10 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
             fromid = m.group(2)
             with rx_lock:
                 rx_data.setdefault("idx", {}).setdefault(idx, {})[fromid] = (ts, rssi)
-            return
+            # return
+            # Immediately echo back
+            if role == "responder":
+                send_beacon(iface, f"IDX:{idx}:FROM:{myid}")
         
         if ssid.startswith("KEYX_DIGEST:"):
             parts = ssid.split(":", 3)
@@ -337,7 +340,7 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
 
     # 2. Wait to collect peer indices
     peer_indices = set()
-    timeout = 3.0
+    timeout = 5.0
     start_time = time.time()
     while time.time() - start_time < timeout:
         with rx_lock:
