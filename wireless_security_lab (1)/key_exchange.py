@@ -45,7 +45,7 @@ class KeyExchange:
         dst_mac = "ff:ff:ff:ff:ff:ff"
         
         dot11 = Dot11(type=0, subtype=4, addr1=dst_mac, addr2=src_mac, addr3=src_mac)
-        payload = f"KEYEX_READY|{self.session_id}"
+        payload = f"KEYEX_READY|{self.session_id}".encode('utf-8')
         
         packet = radiotap / dot11 / Raw(load=payload)
         return packet
@@ -59,9 +59,9 @@ class KeyExchange:
         dot11 = Dot11(type=2, subtype=0, addr1=dst_mac, addr2=src_mac, addr3=src_mac)
         
         if is_reply:
-            payload = f"KEYEX_REPLY|{self.session_id}|{index}|{reply_to_index}"
+            payload = f"KEYEX_REPLY|{self.session_id}|{index}|{reply_to_index}".encode('utf-8')
         else:
-            payload = f"KEYEX_DATA|{self.session_id}|{index}"
+            payload = f"KEYEX_DATA|{self.session_id}|{index}".encode('utf-8')
         
         packet = radiotap / dot11 / Raw(load=payload)
         return packet
@@ -282,9 +282,14 @@ class KeyExchange:
         print(f"\nSending {len(chunks)} chunks of indices...")
         
         for i, chunk in enumerate(chunks):
-            packet = self.create_exchange_frame(9999)
-            payload = f"KEYEX_INDICES|{self.session_id}|{i}|{len(chunks)}|{chunk}"
-            packet[Raw].load = payload
+            radiotap = RadioTap()
+            src_mac = self.get_my_mac()
+            dst_mac = self.partner_mac if self.partner_mac else "ff:ff:ff:ff:ff:ff"
+            
+            dot11 = Dot11(type=2, subtype=0, addr1=dst_mac, addr2=src_mac, addr3=src_mac)
+            payload = f"KEYEX_INDICES|{self.session_id}|{i}|{len(chunks)}|{chunk}".encode('utf-8')
+            
+            packet = radiotap / dot11 / Raw(load=payload)
             
             for _ in range(3):  # Send multiple times for reliability
                 sendp(packet, iface=self.interface, verbose=False)
@@ -376,9 +381,14 @@ class KeyExchange:
         commitment = self.commit_to_key()
         print(f"\nSending commitment: {commitment[:16]}...")
         
-        packet = self.create_exchange_frame(9998)
-        payload = f"KEYEX_COMMIT|{self.session_id}|{commitment}"
-        packet[Raw].load = payload
+        radiotap = RadioTap()
+        src_mac = self.get_my_mac()
+        dst_mac = self.partner_mac if self.partner_mac else "ff:ff:ff:ff:ff:ff"
+        
+        dot11 = Dot11(type=2, subtype=0, addr1=dst_mac, addr2=src_mac, addr3=src_mac)
+        payload = f"KEYEX_COMMIT|{self.session_id}|{commitment}".encode('utf-8')
+        
+        packet = radiotap / dot11 / Raw(load=payload)
         
         for _ in range(5):
             sendp(packet, iface=self.interface, verbose=False)

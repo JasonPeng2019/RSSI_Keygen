@@ -41,11 +41,11 @@ class SurvivorBeacon:
         
         # Add SSID element with survivor ID
         ssid = f"RESCUE-{self.survivor_id}"
-        essid = Dot11Elt(ID='SSID', info=ssid, len=len(ssid))
+        essid = Dot11Elt(ID=0, info=ssid, len=len(ssid))
         
         # Add custom information element with timestamp and sequence
         info = f"SEQ:{self.sequence:06d}|TIME:{int(time.time())}"
-        custom_ie = Dot11Elt(ID='VendorSpecific', info=info, len=len(info))
+        custom_ie = Dot11Elt(ID=221, info=info, len=len(info))
         
         # Assemble packet
         packet = radiotap / dot11 / beacon / essid / custom_ie
