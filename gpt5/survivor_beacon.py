@@ -6,7 +6,7 @@
 import argparse
 import time
 import os
-from scapy.all import RadioTap, Dot11, Dot11Beacon, Dot11Elt, sendp, get_if_hwaddr
+from scapy.all import RadioTap, Dot11, Dot11Beacon, Dot11Elt, LLC, SNAP, Raw, sendp, get_if_hwaddr
 
 def set_monitor(iface, channel, script="./set_monitor_mode.sh"):
     if os.path.exists(script):
@@ -33,8 +33,13 @@ def main():
     try:
         while True:
             ssid = f"SRV:{args.id}:SEQ:{seq}:INFO:OK"
-            beacon = RadioTap()/Dot11(type=0,subtype=8,addr1="ff:ff:ff:ff:ff:ff",
-                                      addr2=hw, addr3=hw)/Dot11Beacon()/Dot11Elt(ID="SSID", info=ssid.encode())
+            beacon = (
+                RadioTap() /
+                Dot11(type=0, subtype=8, addr1="ff:ff:ff:ff:ff:ff", addr2=hw, addr3=hw) /
+                Dot11Beacon() /
+                Dot11Elt(ID="SSID", info=ssid.encode()) /
+                LLC() / SNAP() / Raw(load="")  # Windows expects LLC/SNAP encapsulation
+            )
             sendp(beacon, iface=args.iface, verbose=False)
             seq = (seq + 1) % 65536
             time.sleep(interval)
