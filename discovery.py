@@ -261,13 +261,19 @@ def setup_monitor_mode(interface):
 def get_mac_address(interface):
     """Get MAC address of interface"""
     try:
-        # Try to get from system
-        mac = get_if_hwaddr(interface)
+        # Force use actual interface MAC instead of monitor mode MAC
+        with open(f'/sys/class/net/{interface}/address', 'r') as f:
+            mac = f.read().strip()
         return mac
     except:
-        # Fallback to random MAC for testing
-        import random
-        return ':'.join(['{:02x}'.format(random.randint(0, 255)) for _ in range(6)])
+        # Fallback: try scapy method
+        try:
+            mac = get_if_hwaddr(interface)
+            return mac
+        except:
+            # Last resort: random MAC for testing
+            import random
+            return ':'.join(['{:02x}'.format(random.randint(0, 255)) for _ in range(6)])
 
 
 def main():
