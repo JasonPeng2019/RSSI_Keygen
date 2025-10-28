@@ -29,7 +29,9 @@ class SurvivorBeacon:
         
         # 802.11 frame - using Dot11Beacon
         # Source MAC - unique to this survivor
-        src_mac = f"02:{self.survivor_id[:2]}:{self.survivor_id[2:4]}:{self.survivor_id[4:6]}:00:00"
+        import hashlib
+        mac_hash = hashlib.md5(self.survivor_id.encode()).hexdigest()[:6]
+        src_mac = f"02:{mac_hash[0:2]}:{mac_hash[2:4]}:{mac_hash[4:6]}:00:00"
         dst_mac = "ff:ff:ff:ff:ff:ff"  # Broadcast
         bssid = src_mac
         
