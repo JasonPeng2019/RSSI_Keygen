@@ -22,10 +22,11 @@ def main():
     parser.add_argument("--rate", default=10, type=float, help="beacons per second")
     parser.add_argument("--monitor-script", default="./set_monitor_mode.sh")
     args = parser.parse_args()
+    
+    hw = get_if_hwaddr(args.iface)
 
     set_monitor(args.iface, args.channel, args.monitor_script)
 
-    hw = get_if_hwaddr(args.iface)
     seq = 0
     interval = 1.0 / args.rate
     print(f"[+] Sending beacons on {args.iface} chan {args.channel} id {args.id} @ {args.rate}Hz")
