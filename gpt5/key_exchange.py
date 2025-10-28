@@ -153,6 +153,16 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
                 chunk_data = parts[3]
                 with rx_lock:
                     rx_data.setdefault("digests", {}).setdefault(peerid, {})[chunk_idx] = chunk_data
+        
+        if ssid.startswith("KEYX_INDICES:"):
+            parts = ssid.split(":", 2)
+            if len(parts) == 3:
+                peerid = parts[1]
+                nums = [int(s) for s in parts[2].split(",") if s.isdigit()]
+            with rx_lock:
+                d = rx_data.setdefault("peer_indices", {})
+                d.setdefault(peerid, set()).update(nums)
+            return
         # END signal
         if ssid.startswith("KEYX_END:"):
             end_from = ssid.split(":",1)[1]
@@ -236,10 +246,6 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
             time.sleep(0.05)
         print("[*] Responder done listening for IDX frames (timeout).")
         time.sleep(0.5)
-
-    # after exchange, collate indices and RSSIs
-    stop_event.set()
-    t_sniff.join(timeout=1.0)
 
     # Build index->rssi list from rx_data['idx']
     with rx_lock:
@@ -330,12 +336,14 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
         return
 
     # 1. Send my indices reliably in small chunks
-    chunk_size = 50  # keep SSID safe
+    prefix = f"KEYX_INDICES:{myid}:"
+    max_ssid_len = 32 # 802.11 SSID max length (bytes)
+    chunk_size = max(1, max_ssid_len - len(prefix))
     indices_str = ",".join(map(str, my_indices))
     for start in range(0, len(indices_str), chunk_size):
         chunk = indices_str[start:start+chunk_size]
         for _ in range(3):  # repeat for reliability
-            send_beacon(iface, f"KEYX_INDICES:{myid}:{chunk}")
+            send_beacon(iface, f"{prefix}{chunk}")
             time.sleep(0.05)
 
     # 2. Wait to collect peer indices
@@ -344,16 +352,14 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
     start_time = time.time()
     while time.time() - start_time < timeout:
         with rx_lock:
-            raw = rx_data.get("raw", [])
-        for (_, ssid, _) in raw:
-            if ssid.startswith("KEYX_INDICES:"):
-                parts = ssid.split(":", 2)
-                if len(parts) >= 3:
-                    for s in parts[2].split(","):
-                        if s.strip().isdigit():
-                            peer_indices.add(int(s.strip()))
-        if peer_indices:
-            break
+            d = rx_data.get("peer_indices", {})
+            # take any peer that is not me
+            for peerid, s in d.items():
+                if peerid != myid and s:
+                    peer_indices = set(s)
+                    break
+            if peer_indices:
+                break
         time.sleep(0.05)
 
     if not peer_indices:
@@ -395,6 +401,9 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
             break
         time.sleep(0.05)
 
+    # after exchange, collate indices and RSSIs
+    stop_event.set()
+    t_sniff.join(timeout=1.0)
     # 3. Send END signal only after digest has been sent
     send_end(iface, myid)
     # Send key digest (commit)
