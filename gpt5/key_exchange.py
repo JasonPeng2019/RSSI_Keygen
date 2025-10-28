@@ -146,6 +146,7 @@ def send_end(iface, myid):
     for _ in range(3):
         send_beacon(iface, f"KEYX_END:{myid}")
         time.sleep(0.05)
+    print("sent end beacon")
 
 # Higher-level role negotiation & exchange
 def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script="./set_monitor_mode.sh"):
@@ -190,7 +191,7 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
             return
         
         # END signal
-        if ssid.startswith("KEYX_END:"):
+        if ssid.contains("END:"):
             end_from = ssid.split(":",1)[1]
             print(f"[*] END signal received from {end_from}")
             stop_event.set()   # this will stop the responder loop
