@@ -246,7 +246,7 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
         timeout = 30
         seen_idxs = set()
         # We'll run for up to timeout seconds to capture indices
-        while time.time() - start_time < timeout:
+        while time.time() - start_time < timeout and not stop_event.is_set():
             # scan raw recently seen frames
             with rx_lock:
                 idxs = rx_data.get("idx", {})
@@ -318,6 +318,8 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.8, channel=6, monitor_script
     time.sleep(0.5)
 
     # Signal the responder we are done
+    send_end(iface, myid)
+    time.sleep(0.2)
     send_end(iface, myid)
 
     # Now collect peer indices (we previously captured rx_data raw). Search rx_data['raw'] for KEYX_INDICES
