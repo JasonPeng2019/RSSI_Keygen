@@ -172,14 +172,23 @@ def run_key_exchange(iface, myid, n_frames=300, z=0.6, channel=6, monitor_script
             with rx_lock:
                 acks = rx_data.get("ack", set())
             if acks:
-                responder_id = list(acks)[0]
-                break
+                # Check for specific responder based on myid
+                if myid == "A" and "B" in acks:
+                    responder_id = "B"
+                    break
+                elif myid == "B" and "A" in acks:
+                    responder_id = "A"
+                    break
         if not responder_id:
             # maybe responder already sent READY and we detected earlier
             with rx_lock:
                 readyset = rx_data.get("ready", set())
             if readyset:
-                responder_id = list(readyset)[0]
+                # Check for specific responder based on myid
+                if myid == "A" and "B" in readyset:
+                    responder_id = "B"
+            elif myid == "B" and "A" in readyset:
+                responder_id = "A"
         if not responder_id:
             print("[!] No responder found. Exiting.")
             stop_event.set()
